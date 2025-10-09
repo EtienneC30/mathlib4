@@ -3,7 +3,9 @@ Copyright (c) 2025 Rémy Degenne. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Rémy Degenne, Etienne Marion
 -/
+import Mathlib.Analysis.InnerProductSpace.Adjoint
 import Mathlib.Analysis.InnerProductSpace.Dual
+import Mathlib.LinearAlgebra.Matrix.BilinearForm
 import Mathlib.MeasureTheory.SpecificCodomains.WithLp
 import Mathlib.Probability.Moments.CovarianceBilin
 
@@ -28,7 +30,9 @@ which is bilinear form mapping `x y : E` to `cov[⟪x, ·⟫, ⟪y, ·⟫; μ]`.
 covariance, Hilbert space, bilinear form
 -/
 
-open MeasureTheory InnerProductSpace NormedSpace WithLp EuclideanSpace
+open MeasureTheory InnerProductSpace NormedSpace WithLp EuclideanSpace LinearMap
+
+open scoped Matrix
 
 namespace ProbabilityTheory
 
@@ -94,6 +98,17 @@ lemma isPosSemidef_covInnerBilin [CompleteSpace E] [IsFiniteMeasure μ] :
   eq := covInnerBilin_comm
   nonneg := covInnerBilin_self_nonneg
 
+lemma covInnerBilin_map {F : Type*} [NormedAddCommGroup F] [InnerProductSpace ℝ F]
+    [MeasurableSpace F] [BorelSpace F] [CompleteSpace E] [FiniteDimensional ℝ F]
+    [IsFiniteMeasure μ] (h : MemLp id 2 μ) (L : E →L[ℝ] F) (u v : F) :
+    covInnerBilin (μ.map L) u v = covInnerBilin μ (L.adjoint u) (L.adjoint v) := by
+  rw [covInnerBilin_apply, covInnerBilin_apply h]
+  · simp_rw [_root_.id, L.integral_id_map (h.integrable (by simp))]
+    rw [integral_map]
+    · simp_rw [← map_sub, ← L.adjoint_inner_left]
+    all_goals fun_prop
+  · exact memLp_map_measure_iff (by fun_prop) (by fun_prop) |>.2 (L.comp_memLp' h)
+
 lemma covInnerBilin_map_const_add [CompleteSpace E] [IsProbabilityMeasure μ] (c : E) :
     covInnerBilin (μ.map (fun x ↦ c + x)) = covInnerBilin μ := by
   by_cases h : MemLp id 2 μ
@@ -151,5 +166,54 @@ lemma covInnerBilin_apply_pi {ι Ω : Type*} [Fintype ι] {mΩ : MeasurableSpace
   any_goals exact Measurable.aestronglyMeasurable (by fun_prop)
   · fun_prop
   · exact (memLp_map_measure_iff aestronglyMeasurable_id (by fun_prop)).2 (MemLp.of_eval_piLp hX)
+
+variable [FiniteDimensional ℝ E]
+
+/-- Covariance matrix of a measure on a finite dimensional inner product space. -/
+noncomputable
+def covMatrix (μ : Measure E) : Matrix (Fin (Module.finrank ℝ E)) (Fin (Module.finrank ℝ E)) ℝ :=
+  BilinForm.toMatrix (stdOrthonormalBasis ℝ E).toBasis (covInnerBilin μ).toBilinForm
+
+lemma covMatrix_def (μ : Measure E) :
+    covMatrix μ =
+      BilinForm.toMatrix (stdOrthonormalBasis ℝ E).toBasis (covInnerBilin μ).toBilinForm := rfl
+
+lemma covMatrix_apply (μ : Measure E) (i j : Fin (Module.finrank ℝ E)) :
+    covMatrix μ i j = covInnerBilin μ (stdOrthonormalBasis ℝ E i) (stdOrthonormalBasis ℝ E j) := by
+  rw [covMatrix, BilinForm.toMatrix_apply, ContinuousLinearMap.toBilinForm_apply,
+    OrthonormalBasis.coe_toBasis]
+
+lemma covMatrix_mulVec (x : Fin (Module.finrank ℝ E) → ℝ) :
+    (covMatrix μ) *ᵥ x = fun i ↦
+      covInnerBilin μ (stdOrthonormalBasis ℝ E i) (∑ j, x j • stdOrthonormalBasis ℝ E j) := by
+  ext
+  simp [covMatrix, Matrix.mulVec_eq_sum]
+
+lemma dotProduct_covMatrix_mulVec (x y : Fin (Module.finrank ℝ E) → ℝ) :
+    x ⬝ᵥ (covMatrix μ) *ᵥ y =
+      covInnerBilin μ (∑ j, x j • stdOrthonormalBasis ℝ E j)
+        (∑ j, y j • stdOrthonormalBasis ℝ E j) := by
+  simp_rw [covMatrix, BilinForm.dotProduct_toMatrix_mulVec, ContinuousLinearMap.toBilinForm_apply,
+    Module.Basis.equivFun_symm_apply, OrthonormalBasis.coe_toBasis]
+
+lemma covInnerBilin_eq_dotProduct_covMatrix_mulVec (x y : E) :
+    covInnerBilin μ x y =
+      ((stdOrthonormalBasis ℝ E).repr x) ⬝ᵥ
+        ((covMatrix μ) *ᵥ ((stdOrthonormalBasis ℝ E).repr y)) := by
+  rw [← ContinuousLinearMap.toBilinForm_apply,
+    BilinForm.apply_eq_dotProduct_toMatrix_mulVec (stdOrthonormalBasis ℝ E).toBasis]
+  rfl
+
+lemma covMatrix_map {F : Type*} [NormedAddCommGroup F] [InnerProductSpace ℝ F]
+    [MeasurableSpace F] [BorelSpace F] [FiniteDimensional ℝ F]
+    [IsFiniteMeasure μ] (h : MemLp id 2 μ) (L : E →L[ℝ] F) (i j : Fin (Module.finrank ℝ F)) :
+    covMatrix (μ.map L) i j =
+      (stdOrthonormalBasis ℝ E).repr (L.adjoint (stdOrthonormalBasis ℝ F i)) ⬝ᵥ ((covMatrix μ) *ᵥ
+        (stdOrthonormalBasis ℝ E).repr (L.adjoint (stdOrthonormalBasis ℝ F j))) := by
+  rw [covMatrix_apply, covInnerBilin_map h, covInnerBilin_eq_dotProduct_covMatrix_mulVec]
+
+lemma posSemidef_covMatrix [IsGaussian μ] : (covMatrix μ).PosSemidef :=
+    (ContinuousBilinForm.isPosSemidef_iff_posSemidef_toMatrix _).1
+      IsGaussian.isPosSemidef_covInnerBilin
 
 end ProbabilityTheory
